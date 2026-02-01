@@ -1,10 +1,11 @@
 // Rina Image Generator Extension for SillyTavern
 // Author: smoksshit-cmd
 
-import { getContext, extension_settings, saveSettingsDebounced } from '../../../extensions.js';
-import { eventSource, event_types } from '../../../../script.js';
+import { extension_settings, getContext } from '../../../extensions.js';
+import { saveSettingsDebounced, eventSource, event_types } from '../../../../script.js';
 
 const extensionName = 'rina-image-gen';
+const extensionFolderPath = `scripts/extensions/third_party/${extensionName}`;
 
 const defaultSettings = {
     enabled: true,
@@ -19,7 +20,6 @@ const defaultSettings = {
     extractUserAppearance: true,
     extractClothingFromChat: true,
     extractSceneContext: true,
-    novelAIModel: 'nai-diffusion-3',
     width: 512,
     height: 768,
     steps: 28,
@@ -29,353 +29,271 @@ const defaultSettings = {
 
 function loadSettings() {
     extension_settings[extensionName] = extension_settings[extensionName] || {};
-    Object.keys(defaultSettings).forEach(key => {
+    for (const [key, value] of Object.entries(defaultSettings)) {
         if (extension_settings[extensionName][key] === undefined) {
-            extension_settings[extensionName][key] = defaultSettings[key];
+            extension_settings[extensionName][key] = value;
         }
-    });
+    }
 }
 
 function getSettings() {
     return extension_settings[extensionName];
 }
 
-function saveExtensionSettings() {
-    saveSettingsDebounced();
-}
-
 function extractAppearanceFromCard(description) {
     if (!description) return '';
     
-    const appearancePatterns = [
+    const patterns = [
         /appearance[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
         /looks?[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
         /physical[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
         /внешность[:\s]*([^]*?)(?=характер|история|сценарий|$)/i,
     ];
     
-    for (const pattern of appearancePatterns) {
+    for (const pattern of patterns) {
         const match = description.match(pattern);
-        if (match && match[1]) {
+        if (match?.[1]) {
             return match[1].trim().substring(0, 500);
         }
     }
-    
     return description.substring(0, 300);
 }
 
-function extractClothingFromMessages(messages, characterName) {
-    const clothingKeywords = [
-        'wearing', 'dressed in', 'clothes', 'outfit', 'shirt', 'pants', 'dress',
+function extractClothingFromMessages(messages) {
+    const keywords = [
+        'wearing', 'dressed', 'clothes', 'outfit', 'shirt', 'pants', 'dress',
         'jacket', 'coat', 'skirt', 'jeans', 'uniform', 'suit', 'blouse',
         'одет', 'наряд', 'платье', 'костюм', 'рубашк', 'брюк', 'юбк'
     ];
     
-    const recentMessages = messages.slice(-10);
-    let clothingDescriptions = [];
+    const recent = messages.slice(-10);
+    const found = [];
     
-    for (const msg of recentMessages) {
-        const text = msg.mes || '';
-        for (const keyword of clothingKeywords) {
-            if (text.toLowerCase().includes(keyword)) {
+    for (const msg of recent) {
+        const text = (msg.mes || '').toLowerCase();
+        for (const kw of keywords) {
+            if (text.includes(kw)) {
                 const sentences = text.split(/[.!?]/);
-                for (const sentence of sentences) {
-                    if (sentence.toLowerCase().includes(keyword)) {
-                        clothingDescriptions.push(sentence.trim());
-                    }
+                for (const s of sentences) {
+                    if (s.includes(kw)) found.push(s.trim());
                 }
             }
         }
     }
-    
-    return clothingDescriptions.slice(0, 3).join(', ');
+    return found.slice(0, 3).join(', ');
 }
 
 function extractSceneContext(message) {
     if (!message) return '';
-    
-    const withoutDialogues = message.replace(/"[^"]*"/g, '').replace(/«[^»]*»/g, '');
-    
-    const actionPatterns = [
-        /\*([^*]+)\*/g,
-        /\[([^\]]+)\]/g,
-    ];
-    
-    let sceneElements = [];
-    for (const pattern of actionPatterns) {
-        const matches = withoutDialogues.matchAll(pattern);
-        for (const match of matches) {
-            sceneElements.push(match[1].trim());
-        }
-    }
-    
-    return sceneElements.slice(0, 5).join(', ') || withoutDialogues.substring(0, 200);
-}
-
-function buildPrompt(context) {
-    const settings = getSettings();
+    const clean = message.replace(/"[^"]*"/g, '').replace(/«[^»]*»/g, '');
     const parts = [];
     
-    if (settings.positivePrompt) {
-        parts.push(settings.positivePrompt);
-    }
-    if (settings.stylePrompt) {
-        parts.push(`[STYLE: ${settings.stylePrompt}]`);
+    for (const match of clean.matchAll(/\*([^*]+)\*/g)) parts.push(match[1].trim());
+    for (const match of clean.matchAll(/\[([^\]]+)\]/g)) parts.push(match[1].trim());
+    
+    return parts.slice(0, 5).join(', ') || clean.substring(0, 200);
+}
+
+function buildPrompt(ctx) {
+    const s = getSettings();
+    const parts = [];
+    
+    if (s.positivePrompt) parts.push(s.positivePrompt);
+    if (s.stylePrompt) parts.push(`[STYLE: ${s.stylePrompt}]`);
+    
+    if (s.extractCharacterAppearance && ctx.charDesc) {
+        const app = extractAppearanceFromCard(ctx.charDesc);
+        if (app) parts.push(`[Character: ${app}]`);
     }
     
-    if (settings.extractCharacterAppearance && context.characterDescription) {
-        const appearance = extractAppearanceFromCard(context.characterDescription);
-        if (appearance) {
-            parts.push(`[Character Reference: ${appearance}]`);
-        }
+    if (s.extractUserAppearance && ctx.userDesc) {
+        const app = extractAppearanceFromCard(ctx.userDesc);
+        if (app) parts.push(`[User: ${app}]`);
     }
     
-    if (settings.extractUserAppearance && context.userDescription) {
-        const userAppearance = extractAppearanceFromCard(context.userDescription);
-        if (userAppearance) {
-            parts.push(`[User Reference: ${userAppearance}]`);
-        }
+    if (s.extractClothingFromChat && ctx.messages) {
+        const cloth = extractClothingFromMessages(ctx.messages);
+        if (cloth) parts.push(`[Clothing: ${cloth}]`);
     }
     
-    if (settings.extractClothingFromChat && context.messages) {
-        const clothing = extractClothingFromMessages(context.messages, context.characterName);
-        if (clothing) {
-            parts.push(`[Current Clothing: ${clothing}]`);
-        }
-    }
-    
-    if (settings.extractSceneContext && context.lastMessage) {
-        const scene = extractSceneContext(context.lastMessage);
-        if (scene) {
-            parts.push(`[Scene: ${scene}]`);
-        }
+    if (s.extractSceneContext && ctx.lastMsg) {
+        const scene = extractSceneContext(ctx.lastMsg);
+        if (scene) parts.push(`[Scene: ${scene}]`);
     }
     
     return parts.join(', ');
 }
 
-async function generateViaNanoBanana(prompt, negativePrompt) {
-    const settings = getSettings();
-    const url = settings.nanoBananaUrl;
+async function generateViaNanoBanana(prompt, negative) {
+    const s = getSettings();
+    if (!s.nanoBananaUrl) throw new Error('Nano Banana URL not set');
     
-    if (!url) {
-        throw new Error('Nano Banana URL not configured');
-    }
-    
-    const response = await fetch(url, {
+    const res = await fetch(s.nanoBananaUrl, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            prompt: prompt,
-            negative_prompt: negativePrompt || settings.negativePrompt,
-            width: settings.width,
-            height: settings.height,
-            steps: settings.steps,
-            cfg_scale: settings.scale,
-            sampler_name: settings.sampler,
+            prompt,
+            negative_prompt: negative,
+            width: s.width,
+            height: s.height,
+            steps: s.steps,
+            cfg_scale: s.scale,
+            sampler_name: s.sampler,
         }),
     });
     
-    if (!response.ok) {
-        throw new Error(`Nano Banana error: ${response.status}`);
-    }
-    
-    const data = await response.json();
+    if (!res.ok) throw new Error(`Nano Banana: ${res.status}`);
+    const data = await res.json();
     return data.image || data.images?.[0] || data;
 }
 
-async function generateViaNovelAI(prompt, negativePrompt) {
-    const settings = getSettings();
-    const url = settings.novelAIUrl;
+async function generateViaNovelAI(prompt, negative) {
+    const s = getSettings();
+    if (!s.novelAIUrl) throw new Error('NovelAI URL not set');
     
-    if (!url) {
-        throw new Error('NovelAI URL not configured');
-    }
-    
-    const response = await fetch(url, {
+    const res = await fetch(s.novelAIUrl, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             input: prompt,
-            model: settings.novelAIModel,
+            model: 'nai-diffusion-3',
             parameters: {
-                width: settings.width,
-                height: settings.height,
-                steps: settings.steps,
-                scale: settings.scale,
-                sampler: settings.sampler,
-                negative_prompt: negativePrompt || settings.negativePrompt,
+                width: s.width,
+                height: s.height,
+                steps: s.steps,
+                scale: s.scale,
+                sampler: s.sampler,
+                negative_prompt: negative,
                 n_samples: 1,
             },
         }),
     });
     
-    if (!response.ok) {
-        throw new Error(`NovelAI error: ${response.status}`);
-    }
-    
-    const data = await response.json();
+    if (!res.ok) throw new Error(`NovelAI: ${res.status}`);
+    const data = await res.json();
     return data.output || data.image || data.images?.[0] || data;
 }
 
-async function generateImage(forceRegenerate = false) {
-    const settings = getSettings();
-    
-    if (!settings.enabled && !forceRegenerate) {
-        return;
-    }
-    
-    if (!settings.useNanoBanana && !settings.useNovelAI) {
-        console.log('[Rina] No API selected');
-        return;
-    }
-    
-    const context = getContext();
-    if (!context.chat || context.chat.length === 0) {
-        return;
-    }
-    
-    const lastMessage = context.chat[context.chat.length - 1];
-    if (!lastMessage || lastMessage.is_user) {
-        return;
-    }
-    
-    const promptContext = {
-        characterName: context.name2,
-        characterDescription: context.characters?.[context.characterId]?.description || '',
-        userDescription: context.persona?.description || '',
-        messages: context.chat,
-        lastMessage: lastMessage.mes,
-    };
-    
-    const prompt = buildPrompt(promptContext);
-    const negativePrompt = settings.negativePrompt;
-    
-    console.log('[Rina] Generated prompt:', prompt);
-    
-    updateStatus('loading', 'Generating image...');
-    
-    const results = [];
-    
-    try {
-        if (settings.useNanoBanana && settings.nanoBananaUrl) {
-            try {
-                const result = await generateViaNanoBanana(prompt, negativePrompt);
-                results.push({ api: 'nano-banana', image: result });
-            } catch (e) {
-                console.error('[Rina] Nano Banana error:', e);
-            }
+function updateStatus(type, msg) {
+    const el = document.getElementById('rina-status');
+    if (el) {
+        el.className = `rina-status ${type}`;
+        el.textContent = msg;
+        if (type !== 'loading') {
+            setTimeout(() => { el.textContent = ''; el.className = 'rina-status'; }, 3000);
         }
-        
-        if (settings.useNovelAI && settings.novelAIUrl) {
-            try {
-                const result = await generateViaNovelAI(prompt, negativePrompt);
-                results.push({ api: 'novelai', image: result });
-            } catch (e) {
-                console.error('[Rina] NovelAI error:', e);
-            }
-        }
-        
-        if (results.length === 0) {
-            throw new Error('All API calls failed');
-        }
-        
-        for (const result of results) {
-            insertImageToMessage(lastMessage, result.image, result.api);
-        }
-        
-        updateStatus('success', `Generated ${results.length} image(s)`);
-        
-    } catch (error) {
-        console.error('[Rina] Generation error:', error);
-        updateStatus('error', error.message);
     }
 }
 
-function insertImageToMessage(message, imageData, apiName) {
-    const messageIndex = message.index !== undefined ? message.index : (getContext().chat.length - 1);
-    const messageElement = document.querySelector(`[mesid="${messageIndex}"] .mes_text`);
-    if (!messageElement) {
-        console.log('[Rina] Message element not found for index:', messageIndex);
-        return;
-    }
+function insertImage(mesId, imageData, api) {
+    const mesBlock = document.querySelector(`.mes[mesid="${mesId}"] .mes_text`);
+    if (!mesBlock) return;
     
-    const container = document.createElement('div');
-    container.className = 'rina-image-container';
-    container.dataset.api = apiName;
+    const old = mesBlock.querySelector(`.rina-img[data-api="${api}"]`);
+    if (old) old.remove();
     
     const img = document.createElement('img');
-    img.className = 'rina-generated-image';
+    img.className = 'rina-img';
+    img.dataset.api = api;
+    img.style.cssText = 'max-width:100%;max-height:512px;border-radius:8px;margin-top:10px;cursor:pointer;';
     
     if (typeof imageData === 'string') {
-        if (imageData.startsWith('data:')) {
-            img.src = imageData;
-        } else if (imageData.startsWith('http')) {
+        if (imageData.startsWith('data:') || imageData.startsWith('http')) {
             img.src = imageData;
         } else {
             img.src = `data:image/png;base64,${imageData}`;
         }
     }
     
-    const actions = document.createElement('div');
-    actions.className = 'rina-image-actions';
-    
-    const downloadBtn = document.createElement('button');
-    downloadBtn.className = 'rina-image-action-btn';
-    downloadBtn.innerHTML = '<i class="fa-solid fa-download"></i>';
-    downloadBtn.title = 'Download';
-    downloadBtn.onclick = () => downloadImage(img.src);
-    
-    const regenerateBtn = document.createElement('button');
-    regenerateBtn.className = 'rina-image-action-btn';
-    regenerateBtn.innerHTML = '<i class="fa-solid fa-rotate"></i>';
-    regenerateBtn.title = 'Regenerate';
-    regenerateBtn.onclick = () => generateImage(true);
-    
-    actions.appendChild(downloadBtn);
-    actions.appendChild(regenerateBtn);
-    
-    container.appendChild(img);
-    container.appendChild(actions);
-    
-    const oldContainer = messageElement.querySelector(`.rina-image-container[data-api="${apiName}"]`);
-    if (oldContainer) {
-        oldContainer.remove();
+    img.onclick = () => window.open(img.src, '_blank');
+    mesBlock.appendChild(img);
+}
+
+async function generateImage(force = false) {
+    const s = getSettings();
+    if (!s.enabled && !force) return;
+    if (!s.useNanoBanana && !s.useNovelAI) {
+        console.log('[Rina] No API selected');
+        return;
     }
     
-    messageElement.appendChild(container);
-}
-
-function downloadImage(src) {
-    const link = document.createElement('a');
-    link.href = src;
-    link.download = `rina-${Date.now()}.png`;
-    link.click();
-}
-
-function updateStatus(status, message) {
-    const statusElement = document.getElementById('rina-status');
-    if (statusElement) {
-        statusElement.className = `rina-status ${status}`;
-        statusElement.textContent = message;
-        
-        if (status !== 'loading') {
-            setTimeout(() => {
-                statusElement.textContent = '';
-                statusElement.className = 'rina-status';
-            }, 3000);
+    const context = getContext();
+    const chat = context.chat;
+    if (!chat || chat.length === 0) return;
+    
+    const lastMsg = chat[chat.length - 1];
+    if (!lastMsg || lastMsg.is_user) return;
+    
+    const mesId = chat.length - 1;
+    
+    const promptCtx = {
+        charDesc: context.characters?.[context.characterId]?.description || '',
+        userDesc: context.persona?.description || '',
+        messages: chat,
+        lastMsg: lastMsg.mes,
+    };
+    
+    const prompt = buildPrompt(promptCtx);
+    const negative = s.negativePrompt;
+    
+    console.log('[Rina] Prompt:', prompt);
+    updateStatus('loading', 'Generating...');
+    
+    const results = [];
+    
+    if (s.useNanoBanana && s.nanoBananaUrl) {
+        try {
+            const img = await generateViaNanoBanana(prompt, negative);
+            results.push({ api: 'nanobanana', img });
+        } catch (e) {
+            console.error('[Rina] NanoBanana error:', e);
         }
     }
+    
+    if (s.useNovelAI && s.novelAIUrl) {
+        try {
+            const img = await generateViaNovelAI(prompt, negative);
+            results.push({ api: 'novelai', img });
+        } catch (e) {
+            console.error('[Rina] NovelAI error:', e);
+        }
+    }
+    
+    if (results.length === 0) {
+        updateStatus('error', 'Generation failed');
+        return;
+    }
+    
+    for (const r of results) {
+        insertImage(mesId, r.img, r.api);
+    }
+    
+    updateStatus('success', `Generated ${results.length} image(s)`);
 }
 
-function createUI() {
-    const settings = getSettings();
+function onSettingChange(id, key, isCheckbox = false) {
+    const el = document.getElementById(id);
+    if (!el) return;
     
-    const html = `
+    el.addEventListener(isCheckbox ? 'change' : 'input', function() {
+        const s = getSettings();
+        s[key] = isCheckbox ? this.checked : (this.type === 'number' ? parseFloat(this.value) : this.value);
+        saveSettingsDebounced();
+        
+        if (id === 'rina-use-nanobanana') {
+            document.getElementById('rina-nanobanana-url-row').style.display = this.checked ? 'flex' : 'none';
+        }
+        if (id === 'rina-use-novelai') {
+            document.getElementById('rina-novelai-url-row').style.display = this.checked ? 'flex' : 'none';
+        }
+    });
+}
+
+jQuery(async () => {
+    loadSettings();
+    const s = getSettings();
+    
+    const settingsHtml = `
     <div id="rina-settings">
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
@@ -383,220 +301,141 @@ function createUI() {
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
-                <div class="rina-section">
-                    <div class="rina-checkbox-row">
-                        <input type="checkbox" id="rina-enabled" ${settings.enabled ? 'checked' : ''}>
-                        <label for="rina-enabled">Enable auto-generation</label>
+                <div class="rina-block">
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="rina-enabled" ${s.enabled ? 'checked' : ''}>
+                        <span>Enable auto-generation</span>
+                    </label>
+                </div>
+                
+                <hr>
+                <h4>API Selection</h4>
+                
+                <div class="rina-block">
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="rina-use-nanobanana" ${s.useNanoBanana ? 'checked' : ''}>
+                        <span>Nano Banana</span>
+                    </label>
+                    <div id="rina-nanobanana-url-row" class="rina-row" style="display:${s.useNanoBanana ? 'flex' : 'none'}">
+                        <input type="text" id="rina-nanobanana-url" class="text_pole" value="${s.nanoBananaUrl}" placeholder="https://proxy/nano-banana/KEY">
                     </div>
                 </div>
                 
-                <div class="rina-section">
-                    <div class="rina-section-title">API Selection</div>
-                    
-                    <div class="rina-api-selector">
-                        <div class="rina-api-option ${settings.useNanoBanana ? 'active' : ''}">
-                            <input type="checkbox" id="rina-use-nanobanana" ${settings.useNanoBanana ? 'checked' : ''}>
-                            <label for="rina-use-nanobanana">Nano Banana</label>
-                        </div>
-                        <div class="rina-row" id="rina-nanobanana-url-row" style="display: ${settings.useNanoBanana ? 'flex' : 'none'}">
-                            <label>URL:</label>
-                            <input type="text" id="rina-nanobanana-url" value="${settings.nanoBananaUrl}" placeholder="https://proxy/nano-banana/KEY">
-                        </div>
-                        
-                        <div class="rina-api-option ${settings.useNovelAI ? 'active' : ''}">
-                            <input type="checkbox" id="rina-use-novelai" ${settings.useNovelAI ? 'checked' : ''}>
-                            <label for="rina-use-novelai">NovelAI</label>
-                        </div>
-                        <div class="rina-row" id="rina-novelai-url-row" style="display: ${settings.useNovelAI ? 'flex' : 'none'}">
-                            <label>URL:</label>
-                            <input type="text" id="rina-novelai-url" value="${settings.novelAIUrl}" placeholder="https://aituned.xyz/v1/novelai/KEY">
-                        </div>
+                <div class="rina-block">
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="rina-use-novelai" ${s.useNovelAI ? 'checked' : ''}>
+                        <span>NovelAI</span>
+                    </label>
+                    <div id="rina-novelai-url-row" class="rina-row" style="display:${s.useNovelAI ? 'flex' : 'none'}">
+                        <input type="text" id="rina-novelai-url" class="text_pole" value="${s.novelAIUrl}" placeholder="https://aituned.xyz/v1/novelai/KEY">
                     </div>
                 </div>
                 
-                <div class="rina-section">
-                    <div class="rina-section-title">Prompts</div>
-                    
-                    <div class="rina-row">
-                        <label>Positive:</label>
-                        <textarea id="rina-positive-prompt" placeholder="masterpiece, best quality...">${settings.positivePrompt}</textarea>
-                    </div>
-                    
-                    <div class="rina-row">
-                        <label>Negative:</label>
-                        <textarea id="rina-negative-prompt" placeholder="low quality, bad anatomy...">${settings.negativePrompt}</textarea>
-                    </div>
-                    
-                    <div class="rina-row">
-                        <label>Style:</label>
-                        <input type="text" id="rina-style-prompt" value="${settings.stylePrompt}" placeholder="anime style...">
-                    </div>
+                <hr>
+                <h4>Prompts</h4>
+                
+                <div class="rina-row">
+                    <span>Positive:</span>
+                    <textarea id="rina-positive-prompt" class="text_pole" rows="2" placeholder="masterpiece, best quality...">${s.positivePrompt}</textarea>
                 </div>
                 
-                <div class="rina-section">
-                    <div class="rina-section-title">Auto-Extract</div>
-                    
-                    <div class="rina-checkbox-row">
-                        <input type="checkbox" id="rina-extract-char" ${settings.extractCharacterAppearance ? 'checked' : ''}>
-                        <label for="rina-extract-char">Character appearance from card</label>
-                    </div>
-                    
-                    <div class="rina-checkbox-row">
-                        <input type="checkbox" id="rina-extract-user" ${settings.extractUserAppearance ? 'checked' : ''}>
-                        <label for="rina-extract-user">User/Persona appearance</label>
-                    </div>
-                    
-                    <div class="rina-checkbox-row">
-                        <input type="checkbox" id="rina-extract-clothing" ${settings.extractClothingFromChat ? 'checked' : ''}>
-                        <label for="rina-extract-clothing">Clothing from chat</label>
-                    </div>
-                    
-                    <div class="rina-checkbox-row">
-                        <input type="checkbox" id="rina-extract-scene" ${settings.extractSceneContext ? 'checked' : ''}>
-                        <label for="rina-extract-scene">Scene context</label>
-                    </div>
+                <div class="rina-row">
+                    <span>Negative:</span>
+                    <textarea id="rina-negative-prompt" class="text_pole" rows="2" placeholder="low quality...">${s.negativePrompt}</textarea>
                 </div>
                 
-                <div class="rina-section">
-                    <div class="rina-section-title">Generation Settings</div>
-                    
-                    <div class="rina-row">
-                        <label>Width:</label>
-                        <input type="number" id="rina-width" value="${settings.width}" min="256" max="1024" step="64">
-                    </div>
-                    
-                    <div class="rina-row">
-                        <label>Height:</label>
-                        <input type="number" id="rina-height" value="${settings.height}" min="256" max="1024" step="64">
-                    </div>
-                    
-                    <div class="rina-row">
-                        <label>Steps:</label>
-                        <input type="number" id="rina-steps" value="${settings.steps}" min="1" max="50">
-                    </div>
-                    
-                    <div class="rina-row">
-                        <label>CFG Scale:</label>
-                        <input type="number" id="rina-scale" value="${settings.scale}" min="1" max="30" step="0.5">
-                    </div>
+                <div class="rina-row">
+                    <span>Style (fixed):</span>
+                    <input type="text" id="rina-style-prompt" class="text_pole" value="${s.stylePrompt}" placeholder="anime style...">
                 </div>
                 
-                <div class="rina-section">
-                    <button id="rina-generate-now" class="menu_button" style="width: 100%;">
-                        <i class="fa-solid fa-image"></i> Generate Now
-                    </button>
+                <hr>
+                <h4>Auto-Extract</h4>
+                
+                <label class="checkbox_label">
+                    <input type="checkbox" id="rina-extract-char" ${s.extractCharacterAppearance ? 'checked' : ''}>
+                    <span>Character appearance from card</span>
+                </label>
+                
+                <label class="checkbox_label">
+                    <input type="checkbox" id="rina-extract-user" ${s.extractUserAppearance ? 'checked' : ''}>
+                    <span>User/Persona appearance</span>
+                </label>
+                
+                <label class="checkbox_label">
+                    <input type="checkbox" id="rina-extract-clothing" ${s.extractClothingFromChat ? 'checked' : ''}>
+                    <span>Clothing from chat</span>
+                </label>
+                
+                <label class="checkbox_label">
+                    <input type="checkbox" id="rina-extract-scene" ${s.extractSceneContext ? 'checked' : ''}>
+                    <span>Scene context</span>
+                </label>
+                
+                <hr>
+                <h4>Settings</h4>
+                
+                <div class="rina-row">
+                    <span>Width:</span>
+                    <input type="number" id="rina-width" class="text_pole" value="${s.width}" min="256" max="1024" step="64">
+                </div>
+                
+                <div class="rina-row">
+                    <span>Height:</span>
+                    <input type="number" id="rina-height" class="text_pole" value="${s.height}" min="256" max="1024" step="64">
+                </div>
+                
+                <div class="rina-row">
+                    <span>Steps:</span>
+                    <input type="number" id="rina-steps" class="text_pole" value="${s.steps}" min="1" max="50">
+                </div>
+                
+                <div class="rina-row">
+                    <span>CFG Scale:</span>
+                    <input type="number" id="rina-scale" class="text_pole" value="${s.scale}" min="1" max="30" step="0.5">
+                </div>
+                
+                <hr>
+                
+                <div class="rina-row">
+                    <input id="rina-generate-btn" class="menu_button" type="button" value="🎨 Generate Now">
                 </div>
                 
                 <div id="rina-status" class="rina-status"></div>
             </div>
         </div>
-    </div>
-    `;
+    </div>`;
     
-    $('#extensions_settings2').append(html);
+    $('#extensions_settings2').append(settingsHtml);
     
-    // Кнопка в extensionsMenu
-    const regenBtn = $('<div id="rina-regen-btn" class="list-group-item flex-container flexGap5" title="Regenerate Image"><i class="fa-solid fa-image"></i></div>');
+    // Кнопка регенерации в wand menu
+    const regenBtn = `<div id="rina-regen-btn" class="list-group-item flex-container flexGap5" title="Regenerate Rina Image">
+        <i class="fa-solid fa-image extensionsMenuExtensionButton"></i>
+    </div>`;
     $('#extensionsMenu').append(regenBtn);
     
-    bindEvents();
-}
-
-function bindEvents() {
-    const settings = getSettings();
+    // Привязка событий
+    onSettingChange('rina-enabled', 'enabled', true);
+    onSettingChange('rina-use-nanobanana', 'useNanoBanana', true);
+    onSettingChange('rina-use-novelai', 'useNovelAI', true);
+    onSettingChange('rina-nanobanana-url', 'nanoBananaUrl');
+    onSettingChange('rina-novelai-url', 'novelAIUrl');
+    onSettingChange('rina-positive-prompt', 'positivePrompt');
+    onSettingChange('rina-negative-prompt', 'negativePrompt');
+    onSettingChange('rina-style-prompt', 'stylePrompt');
+    onSettingChange('rina-extract-char', 'extractCharacterAppearance', true);
+    onSettingChange('rina-extract-user', 'extractUserAppearance', true);
+    onSettingChange('rina-extract-clothing', 'extractClothingFromChat', true);
+    onSettingChange('rina-extract-scene', 'extractSceneContext', true);
+    onSettingChange('rina-width', 'width');
+    onSettingChange('rina-height', 'height');
+    onSettingChange('rina-steps', 'steps');
+    onSettingChange('rina-scale', 'scale');
     
-    $('#rina-enabled').on('change', function() {
-        settings.enabled = this.checked;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-use-nanobanana').on('change', function() {
-        settings.useNanoBanana = this.checked;
-        $(this).closest('.rina-api-option').toggleClass('active', this.checked);
-        $('#rina-nanobanana-url-row').toggle(this.checked);
-        saveExtensionSettings();
-    });
-    
-    $('#rina-use-novelai').on('change', function() {
-        settings.useNovelAI = this.checked;
-        $(this).closest('.rina-api-option').toggleClass('active', this.checked);
-        $('#rina-novelai-url-row').toggle(this.checked);
-        saveExtensionSettings();
-    });
-    
-    $('#rina-nanobanana-url').on('input', function() {
-        settings.nanoBananaUrl = this.value;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-novelai-url').on('input', function() {
-        settings.novelAIUrl = this.value;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-positive-prompt').on('input', function() {
-        settings.positivePrompt = this.value;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-negative-prompt').on('input', function() {
-        settings.negativePrompt = this.value;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-style-prompt').on('input', function() {
-        settings.stylePrompt = this.value;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-extract-char').on('change', function() {
-        settings.extractCharacterAppearance = this.checked;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-extract-user').on('change', function() {
-        settings.extractUserAppearance = this.checked;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-extract-clothing').on('change', function() {
-        settings.extractClothingFromChat = this.checked;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-extract-scene').on('change', function() {
-        settings.extractSceneContext = this.checked;
-        saveExtensionSettings();
-    });
-    
-    $('#rina-width').on('change', function() {
-        settings.width = parseInt(this.value);
-        saveExtensionSettings();
-    });
-    
-    $('#rina-height').on('change', function() {
-        settings.height = parseInt(this.value);
-        saveExtensionSettings();
-    });
-    
-    $('#rina-steps').on('change', function() {
-        settings.steps = parseInt(this.value);
-        saveExtensionSettings();
-    });
-    
-    $('#rina-scale').on('change', function() {
-        settings.scale = parseFloat(this.value);
-        saveExtensionSettings();
-    });
-    
-    $('#rina-generate-now').on('click', () => generateImage(true));
+    $('#rina-generate-btn').on('click', () => generateImage(true));
     $('#rina-regen-btn').on('click', () => generateImage(true));
-}
-
-jQuery(async () => {
-    loadSettings();
-    createUI();
     
+    // Автогенерация при новом сообщении
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {
         setTimeout(() => generateImage(false), 500);
     });
