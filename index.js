@@ -1,39 +1,24 @@
 // Rina Image Generator Extension for SillyTavern
 // Author: smoksshit-cmd
 
-import {
-    getContext,
-    extension_settings,
-    saveSettingsDebounced,
-} from '../../../extensions.js';
-
-import {
-    eventSource,
-    event_types,
-    saveSettingsDebounced as saveSettings,
-} from '../../../../script.js';
+import { getContext, extension_settings, saveSettingsDebounced } from '../../../extensions.js';
+import { eventSource, event_types } from '../../../../script.js';
 
 const extensionName = 'rina-image-gen';
-const extensionFolderPath = `scripts/extensions/third_party/${extensionName}`;
 
-// Дефолтные настройки
 const defaultSettings = {
     enabled: true,
-    // API настройки
     useNanoBanana: true,
     useNovelAI: false,
     nanoBananaUrl: '',
     novelAIUrl: '',
-    // Промпты
     positivePrompt: '',
     negativePrompt: 'low quality, bad anatomy, worst quality, blurry',
     stylePrompt: '',
-    // Опции
     extractCharacterAppearance: true,
     extractUserAppearance: true,
     extractClothingFromChat: true,
     extractSceneContext: true,
-    // NovelAI специфичные настройки
     novelAIModel: 'nai-diffusion-3',
     width: 512,
     height: 768,
@@ -42,7 +27,6 @@ const defaultSettings = {
     sampler: 'k_euler',
 };
 
-// Инициализация настроек
 function loadSettings() {
     extension_settings[extensionName] = extension_settings[extensionName] || {};
     Object.keys(defaultSettings).forEach(key => {
@@ -52,21 +36,17 @@ function loadSettings() {
     });
 }
 
-// Получение настроек
 function getSettings() {
     return extension_settings[extensionName];
 }
 
-// Сохранение настроек
 function saveExtensionSettings() {
     saveSettingsDebounced();
 }
 
-// Извлечение внешности из описания карточки
 function extractAppearanceFromCard(description) {
     if (!description) return '';
     
-    // Паттерны для поиска описания внешности
     const appearancePatterns = [
         /appearance[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
         /looks?[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
@@ -81,11 +61,9 @@ function extractAppearanceFromCard(description) {
         }
     }
     
-    // Если нет явного раздела внешности, берём первые 300 символов
     return description.substring(0, 300);
 }
 
-// Извлечение одежды из последних сообщений
 function extractClothingFromMessages(messages, characterName) {
     const clothingKeywords = [
         'wearing', 'dressed in', 'clothes', 'outfit', 'shirt', 'pants', 'dress',
@@ -100,7 +78,6 @@ function extractClothingFromMessages(messages, characterName) {
         const text = msg.mes || '';
         for (const keyword of clothingKeywords) {
             if (text.toLowerCase().includes(keyword)) {
-                // Извлекаем предложение с ключевым словом
                 const sentences = text.split(/[.!?]/);
                 for (const sentence of sentences) {
                     if (sentence.toLowerCase().includes(keyword)) {
@@ -114,17 +91,14 @@ function extractClothingFromMessages(messages, characterName) {
     return clothingDescriptions.slice(0, 3).join(', ');
 }
 
-// Извлечение контекста сцены из последнего сообщения
 function extractSceneContext(message) {
     if (!message) return '';
     
-    // Убираем диалоги, оставляем описания
     const withoutDialogues = message.replace(/"[^"]*"/g, '').replace(/«[^»]*»/g, '');
     
-    // Ищем описания действий и окружения
     const actionPatterns = [
-        /\*([^*]+)\*/g,  // *действия*
-        /\[([^\]]+)\]/g, // [описания]
+        /\*([^*]+)\*/g,
+        /\[([^\]]+)\]/g,
     ];
     
     let sceneElements = [];
@@ -138,12 +112,10 @@ function extractSceneContext(message) {
     return sceneElements.slice(0, 5).join(', ') || withoutDialogues.substring(0, 200);
 }
 
-// Построение финального промпта
 function buildPrompt(context) {
     const settings = getSettings();
     const parts = [];
     
-    // 1. Позитивный промпт и стиль
     if (settings.positivePrompt) {
         parts.push(settings.positivePrompt);
     }
@@ -151,7 +123,6 @@ function buildPrompt(context) {
         parts.push(`[STYLE: ${settings.stylePrompt}]`);
     }
     
-    // 2. Внешность персонажа
     if (settings.extractCharacterAppearance && context.characterDescription) {
         const appearance = extractAppearanceFromCard(context.characterDescription);
         if (appearance) {
@@ -159,7 +130,6 @@ function buildPrompt(context) {
         }
     }
     
-    // 3. Внешность юзера
     if (settings.extractUserAppearance && context.userDescription) {
         const userAppearance = extractAppearanceFromCard(context.userDescription);
         if (userAppearance) {
@@ -167,7 +137,6 @@ function buildPrompt(context) {
         }
     }
     
-    // 4. Текущая одежда
     if (settings.extractClothingFromChat && context.messages) {
         const clothing = extractClothingFromMessages(context.messages, context.characterName);
         if (clothing) {
@@ -175,7 +144,6 @@ function buildPrompt(context) {
         }
     }
     
-    // 5. Контекст сцены
     if (settings.extractSceneContext && context.lastMessage) {
         const scene = extractSceneContext(context.lastMessage);
         if (scene) {
@@ -186,7 +154,6 @@ function buildPrompt(context) {
     return parts.join(', ');
 }
 
-// Генерация через Nano Banana
 async function generateViaNanoBanana(prompt, negativePrompt) {
     const settings = getSettings();
     const url = settings.nanoBananaUrl;
@@ -219,7 +186,6 @@ async function generateViaNanoBanana(prompt, negativePrompt) {
     return data.image || data.images?.[0] || data;
 }
 
-// Генерация через NovelAI
 async function generateViaNovelAI(prompt, negativePrompt) {
     const settings = getSettings();
     const url = settings.novelAIUrl;
@@ -256,7 +222,6 @@ async function generateViaNovelAI(prompt, negativePrompt) {
     return data.output || data.image || data.images?.[0] || data;
 }
 
-// Основная функция генерации
 async function generateImage(forceRegenerate = false) {
     const settings = getSettings();
     
@@ -276,19 +241,17 @@ async function generateImage(forceRegenerate = false) {
     
     const lastMessage = context.chat[context.chat.length - 1];
     if (!lastMessage || lastMessage.is_user) {
-        return; // Генерируем только для сообщений персонажа
+        return;
     }
     
-    // Собираем контекст
     const promptContext = {
         characterName: context.name2,
-        characterDescription: context.characterId ? context.characters[context.characterId]?.description : '',
+        characterDescription: context.characters?.[context.characterId]?.description || '',
         userDescription: context.persona?.description || '',
         messages: context.chat,
         lastMessage: lastMessage.mes,
     };
     
-    // Строим промпт
     const prompt = buildPrompt(promptContext);
     const negativePrompt = settings.negativePrompt;
     
@@ -299,7 +262,6 @@ async function generateImage(forceRegenerate = false) {
     const results = [];
     
     try {
-        // Генерация через выбранные API
         if (settings.useNanoBanana && settings.nanoBananaUrl) {
             try {
                 const result = await generateViaNanoBanana(prompt, negativePrompt);
@@ -322,7 +284,6 @@ async function generateImage(forceRegenerate = false) {
             throw new Error('All API calls failed');
         }
         
-        // Вставляем изображение в последнее сообщение
         for (const result of results) {
             insertImageToMessage(lastMessage, result.image, result.api);
         }
@@ -335,21 +296,21 @@ async function generateImage(forceRegenerate = false) {
     }
 }
 
-// Вставка изображения в сообщение
 function insertImageToMessage(message, imageData, apiName) {
-    const messageElement = document.querySelector(`[mesid="${message.index}"] .mes_text`);
-    if (!messageElement) return;
+    const messageIndex = message.index !== undefined ? message.index : (getContext().chat.length - 1);
+    const messageElement = document.querySelector(`[mesid="${messageIndex}"] .mes_text`);
+    if (!messageElement) {
+        console.log('[Rina] Message element not found for index:', messageIndex);
+        return;
+    }
     
-    // Создаём контейнер для изображения
     const container = document.createElement('div');
     container.className = 'rina-image-container';
     container.dataset.api = apiName;
     
-    // Создаём изображение
     const img = document.createElement('img');
     img.className = 'rina-generated-image';
     
-    // Определяем формат данных
     if (typeof imageData === 'string') {
         if (imageData.startsWith('data:')) {
             img.src = imageData;
@@ -360,7 +321,6 @@ function insertImageToMessage(message, imageData, apiName) {
         }
     }
     
-    // Кнопки действий
     const actions = document.createElement('div');
     actions.className = 'rina-image-actions';
     
@@ -382,7 +342,6 @@ function insertImageToMessage(message, imageData, apiName) {
     container.appendChild(img);
     container.appendChild(actions);
     
-    // Удаляем старое изображение от этого API если есть
     const oldContainer = messageElement.querySelector(`.rina-image-container[data-api="${apiName}"]`);
     if (oldContainer) {
         oldContainer.remove();
@@ -391,7 +350,6 @@ function insertImageToMessage(message, imageData, apiName) {
     messageElement.appendChild(container);
 }
 
-// Скачивание изображения
 function downloadImage(src) {
     const link = document.createElement('a');
     link.href = src;
@@ -399,7 +357,6 @@ function downloadImage(src) {
     link.click();
 }
 
-// Обновление статуса
 function updateStatus(status, message) {
     const statusElement = document.getElementById('rina-status');
     if (statusElement) {
@@ -415,19 +372,17 @@ function updateStatus(status, message) {
     }
 }
 
-// Создание UI расширения
 function createUI() {
     const settings = getSettings();
     
     const html = `
-    <div id="rina-settings" class="extension_settings">
+    <div id="rina-settings">
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b>🎨 Rina Image Generator</b>
-                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div>
+                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
-                <!-- Enable/Disable -->
                 <div class="rina-section">
                     <div class="rina-checkbox-row">
                         <input type="checkbox" id="rina-enabled" ${settings.enabled ? 'checked' : ''}>
@@ -435,7 +390,6 @@ function createUI() {
                     </div>
                 </div>
                 
-                <!-- API Selection -->
                 <div class="rina-section">
                     <div class="rina-section-title">API Selection</div>
                     
@@ -446,7 +400,7 @@ function createUI() {
                         </div>
                         <div class="rina-row" id="rina-nanobanana-url-row" style="display: ${settings.useNanoBanana ? 'flex' : 'none'}">
                             <label>URL:</label>
-                            <input type="text" id="rina-nanobanana-url" value="${settings.nanoBananaUrl}" placeholder="https://proxy.example.com/nano-banana/YOUR_KEY">
+                            <input type="text" id="rina-nanobanana-url" value="${settings.nanoBananaUrl}" placeholder="https://proxy/nano-banana/KEY">
                         </div>
                         
                         <div class="rina-api-option ${settings.useNovelAI ? 'active' : ''}">
@@ -455,18 +409,17 @@ function createUI() {
                         </div>
                         <div class="rina-row" id="rina-novelai-url-row" style="display: ${settings.useNovelAI ? 'flex' : 'none'}">
                             <label>URL:</label>
-                            <input type="text" id="rina-novelai-url" value="${settings.novelAIUrl}" placeholder="https://aituned.xyz/v1/novelai/YOUR_KEY">
+                            <input type="text" id="rina-novelai-url" value="${settings.novelAIUrl}" placeholder="https://aituned.xyz/v1/novelai/KEY">
                         </div>
                     </div>
                 </div>
                 
-                <!-- Prompts -->
                 <div class="rina-section">
                     <div class="rina-section-title">Prompts</div>
                     
                     <div class="rina-row">
                         <label>Positive:</label>
-                        <textarea id="rina-positive-prompt" placeholder="masterpiece, best quality, detailed...">${settings.positivePrompt}</textarea>
+                        <textarea id="rina-positive-prompt" placeholder="masterpiece, best quality...">${settings.positivePrompt}</textarea>
                     </div>
                     
                     <div class="rina-row">
@@ -475,12 +428,11 @@ function createUI() {
                     </div>
                     
                     <div class="rina-row">
-                        <label>Style (fixed):</label>
-                        <input type="text" id="rina-style-prompt" value="${settings.stylePrompt}" placeholder="anime style, digital art...">
+                        <label>Style:</label>
+                        <input type="text" id="rina-style-prompt" value="${settings.stylePrompt}" placeholder="anime style...">
                     </div>
                 </div>
                 
-                <!-- Extraction Options -->
                 <div class="rina-section">
                     <div class="rina-section-title">Auto-Extract</div>
                     
@@ -505,7 +457,6 @@ function createUI() {
                     </div>
                 </div>
                 
-                <!-- Generation Settings -->
                 <div class="rina-section">
                     <div class="rina-section-title">Generation Settings</div>
                     
@@ -530,53 +481,35 @@ function createUI() {
                     </div>
                 </div>
                 
-                <!-- Manual Actions -->
                 <div class="rina-section">
-                    <button id="rina-generate-now" class="rina-btn rina-btn-primary" style="width: 100%;">
+                    <button id="rina-generate-now" class="menu_button" style="width: 100%;">
                         <i class="fa-solid fa-image"></i> Generate Now
                     </button>
                 </div>
                 
-                <!-- Status -->
                 <div id="rina-status" class="rina-status"></div>
             </div>
         </div>
     </div>
     `;
     
-    // Вставляем в панель расширений
-    $('#extensions_settings').append(html);
+    $('#extensions_settings2').append(html);
     
-    // Добавляем кнопку перегенерации в быстрый доступ
-    const regenerateBtn = `
-    <div id="rina-regenerate-btn" class="mes_button" title="Regenerate Rina Image">
-        <i class="fa-solid fa-image"></i>
-    </div>
-    `;
+    // Кнопка в extensionsMenu
+    const regenBtn = $('<div id="rina-regen-btn" class="list-group-item flex-container flexGap5" title="Regenerate Image"><i class="fa-solid fa-image"></i></div>');
+    $('#extensionsMenu').append(regenBtn);
     
-    // Пытаемся найти панель быстрого доступа
-    const quickPanel = document.querySelector('#form_sheld .mes_buttons') || 
-                       document.querySelector('.mes_buttons') ||
-                       document.querySelector('#send_form');
-    if (quickPanel) {
-        $(quickPanel).prepend(regenerateBtn);
-    }
-    
-    // Привязка событий
     bindEvents();
 }
 
-// Привязка событий UI
 function bindEvents() {
     const settings = getSettings();
     
-    // Enable toggle
     $('#rina-enabled').on('change', function() {
         settings.enabled = this.checked;
         saveExtensionSettings();
     });
     
-    // API Selection
     $('#rina-use-nanobanana').on('change', function() {
         settings.useNanoBanana = this.checked;
         $(this).closest('.rina-api-option').toggleClass('active', this.checked);
@@ -591,7 +524,6 @@ function bindEvents() {
         saveExtensionSettings();
     });
     
-    // URLs
     $('#rina-nanobanana-url').on('input', function() {
         settings.nanoBananaUrl = this.value;
         saveExtensionSettings();
@@ -602,7 +534,6 @@ function bindEvents() {
         saveExtensionSettings();
     });
     
-    // Prompts
     $('#rina-positive-prompt').on('input', function() {
         settings.positivePrompt = this.value;
         saveExtensionSettings();
@@ -618,7 +549,6 @@ function bindEvents() {
         saveExtensionSettings();
     });
     
-    // Extraction options
     $('#rina-extract-char').on('change', function() {
         settings.extractCharacterAppearance = this.checked;
         saveExtensionSettings();
@@ -639,7 +569,6 @@ function bindEvents() {
         saveExtensionSettings();
     });
     
-    // Generation settings
     $('#rina-width').on('change', function() {
         settings.width = parseInt(this.value);
         saveExtensionSettings();
@@ -660,21 +589,15 @@ function bindEvents() {
         saveExtensionSettings();
     });
     
-    // Generate button
     $('#rina-generate-now').on('click', () => generateImage(true));
-    
-    // Quick regenerate button
-    $('#rina-regenerate-btn').on('click', () => generateImage(true));
+    $('#rina-regen-btn').on('click', () => generateImage(true));
 }
 
-// Инициализация расширения
 jQuery(async () => {
     loadSettings();
     createUI();
     
-    // Подписываемся на событие нового сообщения
-    eventSource.on(event_types.MESSAGE_RECEIVED, (messageIndex) => {
-        // Небольшая задержка чтобы сообщение успело отрендериться
+    eventSource.on(event_types.MESSAGE_RECEIVED, () => {
         setTimeout(() => generateImage(false), 500);
     });
     
