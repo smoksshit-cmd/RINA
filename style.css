@@ -1,0 +1,277 @@
+/* Rina Image Generator Styles */
+
+#rina-settings {
+    padding: 10px;
+}
+
+#rina-settings .inline-drawer-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 8px 0;
+}
+
+#rina-settings .inline-drawer-header b {
+    flex-grow: 1;
+}
+
+#rina-settings .inline-drawer-content {
+    padding: 10px 0;
+}
+
+.rina-section {
+    margin-bottom: 15px;
+    padding: 10px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 8px;
+}
+
+.rina-section-title {
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: var(--SmartThemeBodyColor);
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    padding-bottom: 5px;
+}
+
+.rina-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.rina-row label {
+    min-width: 120px;
+    color: var(--SmartThemeBodyColor);
+}
+
+.rina-row input[type="text"],
+.rina-row textarea {
+    flex-grow: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 4px;
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+}
+
+.rina-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.rina-row textarea {
+    min-height: 60px;
+    resize: vertical;
+}
+
+.rina-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.rina-checkbox-row label {
+    cursor: pointer;
+    color: var(--SmartThemeBodyColor);
+}
+
+.rina-api-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.rina-api-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+}
+
+.rina-api-option.active {
+    border-color: var(--SmartThemeQuoteColor);
+    background: rgba(var(--SmartThemeQuoteColorRGB), 0.1);
+}
+
+.rina-api-option label {
+    flex-grow: 1;
+    cursor: pointer;
+}
+
+.rina-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.rina-btn-primary {
+    background: var(--SmartThemeQuoteColor);
+    color: white;
+}
+
+.rina-btn-primary:hover {
+    filter: brightness(1.1);
+}
+
+.rina-btn-secondary {
+    background: var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+}
+
+.rina-btn-secondary:hover {
+    filter: brightness(1.2);
+}
+
+/* Кнопка перегенерации в панели быстрого доступа */
+#rina-regenerate-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 4px;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#rina-regenerate-btn:hover {
+    background: var(--SmartThemeQuoteColor);
+    color: white;
+}
+
+#rina-regenerate-btn i {
+    font-size: 14px;
+}
+
+/* Статус генерации */
+.rina-status {
+    padding: 8px;
+    border-radius: 4px;
+    margin-top: 10px;
+    font-size: 12px;
+}
+
+.rina-status.loading {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+}
+
+.rina-status.success {
+    background: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+}
+
+.rina-status.error {
+    background: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+}
+
+/* Изображение в сообщении */
+.rina-generated-image {
+    max-width: 100%;
+    max-height: 512px;
+    border-radius: 8px;
+    margin-top: 10px;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.rina-generated-image:hover {
+    transform: scale(1.02);
+}
+
+.rina-image-container {
+    position: relative;
+    display: inline-block;
+    margin-top: 10px;
+}
+
+.rina-image-actions {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    display: flex;
+    gap: 5px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.rina-image-container:hover .rina-image-actions {
+    opacity: 1;
+}
+
+.rina-image-action-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.rina-image-action-btn:hover {
+    background: rgba(0, 0, 0, 0.9);
+}
+
+/* Toggle switch */
+.rina-toggle {
+    position: relative;
+    width: 50px;
+    height: 24px;
+}
+
+.rina-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.rina-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--SmartThemeBorderColor);
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.rina-toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.rina-toggle input:checked + .rina-toggle-slider {
+    background-color: var(--SmartThemeQuoteColor);
+}
+
+.rina-toggle input:checked + .rina-toggle-slider:before {
+    transform: translateX(26px);
+}
