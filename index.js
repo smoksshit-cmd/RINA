@@ -1,8 +1,8 @@
 // Rina Image Generator Extension for SillyTavern
 // Author: smoksshit-cmd
 
-import { extension_settings, getContext } from '../../../extensions.js';
-import { saveSettingsDebounced, eventSource, event_types } from '../../../../script.js';
+import { extension_settings, getContext, saveMetadataDebounced } from '../../../extensions.js';
+import { saveSettingsDebounced, eventSource, event_types, saveChatDebounced } from '../../../../script.js';
 
 const extensionName = 'rina-image-gen';
 
@@ -11,7 +11,7 @@ const defaultSettings = {
     useNanoBanana: false,
     useNovelAI: true,
     nanoBananaUrl: '',
-    novelAIKey: '', // Только ключ, без полного URL
+    novelAIKey: '',
     positivePrompt: '0.5::{{artist:5202609076a}}, {{artist:2400db}}, 0.8::{{artist:kamochiru}}, masterpiece, best quality, absurdres, source anime, vibrant colors',
     negativePrompt: 'worst_quality, low_quality, lowres, jpeg_artifacts, blurry, grainy, noisy, photorealistic, hyper_realistic, realistic, 3d, 3d_render, cgi, uncanny_valley, bad_anatomy, wrong_anatomy, bad_body, deformed, disfigured, mutated, mutation, ugly, disgusting, amputation, extra_limb, extra_limbs, missing_limbs, extra_arm, extra_leg, floating_limbs, disconnected_limbs, fused_limbs, twisted_limbs, bad_hands, bad_fingers, mutated_hands, malformed_hands, deformed_hands, extra_fingers, fewer_fingers, missing_fingers, fused_fingers, too_many_fingers, six_fingers, twisted_fingers, broken_fingers, merged_fingers, lobster_hands, bad_face, ugly_face, deformed_face, asymmetrical_face, asymmetrical_eyes, mismatched_eyes, crossed_eyes, bulging_eyes, melted_face, distorted_face, poorly_drawn_face, excessive_emotion, exaggerated_expression, crooked_mouth, bad_proportions, wrong_proportions, disproportionate, anatomically_incorrect, impossible_pose, contorted_pose, unnatural_pose, broken_pose, dislocated_joints, impossible_angle, bad_foreshortening, bad_feet, extra_toes, watermark, signature, text, logo',
     stylePrompt: '',
@@ -36,101 +36,189 @@ function getSettings() {
     return extension_settings[extensionName];
 }
 
+// Извлечение внешности из карточки
 function extractAppearanceFromCard(description) {
     if (!description) return '';
     
     const patterns = [
-        /appearance[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
-        /looks?[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
-        /physical[:\s]*([^]*?)(?=personality|background|scenario|$)/i,
-        /внешность[:\s]*([^]*?)(?=характер|история|сценарий|$)/i,
+        /appearance[:\s]*([^]*?)(?=personality|background|scenario|###|$)/i,
+        /looks?[:\s]*([^]*?)(?=personality|background|scenario|###|$)/i,
+        /physical[:\s]*([^]*?)(?=personality|background|scenario|###|$)/i,
+        /внешность[:\s]*([^]*?)(?=характер|история|сценарий|###|$)/i,
+        /description[:\s]*([^]*?)(?=personality|background|scenario|###|$)/i,
     ];
     
     for (const pattern of patterns) {
         const match = description.match(pattern);
         if (match?.[1]) {
-            return match[1].trim().substring(0, 500);
+            return match[1].trim().substring(0, 400);
         }
     }
     return description.substring(0, 300);
 }
 
+// Извлечение одежды из сообщений
 function extractClothingFromMessages(messages) {
     const keywords = [
         'wearing', 'dressed', 'clothes', 'outfit', 'shirt', 'pants', 'dress',
-        'jacket', 'coat', 'skirt', 'jeans', 'uniform', 'suit', 'blouse',
-        'одет', 'наряд', 'платье', 'костюм', 'рубашк', 'брюк', 'юбк'
+        'jacket', 'coat', 'skirt', 'jeans', 'uniform', 'suit', 'blouse', 'naked',
+        'nude', 'underwear', 'bikini', 'swimsuit', 'armor', 'robe', 'cloak',
+        'одет', 'наряд', 'платье', 'костюм', 'рубашк', 'брюк', 'юбк', 'голы', 'белье'
     ];
     
-    const recent = messages.slice(-10);
+    const recent = messages.slice(-5);
     const found = [];
     
     for (const msg of recent) {
         const text = (msg.mes || '').toLowerCase();
         for (const kw of keywords) {
             if (text.includes(kw)) {
-                const sentences = text.split(/[.!?]/);
+                const sentences = text.split(/[.!?\n]/);
                 for (const s of sentences) {
-                    if (s.includes(kw)) found.push(s.trim());
+                    if (s.includes(kw) && s.trim().length > 10) {
+                        found.push(s.trim());
+                    }
                 }
             }
         }
     }
-    return found.slice(0, 3).join(', ');
+    return found.slice(0, 2).join(', ');
 }
 
-function extractSceneContext(message) {
+// УЛУЧШЕННОЕ извлечение сцены и действий из сообщения
+function extractSceneFromMessage(message) {
     if (!message) return '';
-    const clean = message.replace(/"[^"]*"/g, '').replace(/«[^»]*»/g, '');
-    const parts = [];
     
-    for (const match of clean.matchAll(/\*([^*]+)\*/g)) parts.push(match[1].trim());
-    for (const match of clean.matchAll(/\[([^\]]+)\]/g)) parts.push(match[1].trim());
+    const sceneElements = [];
     
-    return parts.slice(0, 5).join(', ') || clean.substring(0, 200);
+    // 1. Извлекаем ВСЕ действия в звёздочках *действие*
+    const asteriskActions = message.match(/\*([^*]+)\*/g);
+    if (asteriskActions) {
+        for (const action of asteriskActions) {
+            const clean = action.replace(/\*/g, '').trim();
+            if (clean.length > 5) {
+                sceneElements.push(clean);
+            }
+        }
+    }
+    
+    // 2. Извлекаем описания в квадратных скобках [описание]
+    const bracketDesc = message.match(/\[([^\]]+)\]/g);
+    if (bracketDesc) {
+        for (const desc of bracketDesc) {
+            const clean = desc.replace(/[\[\]]/g, '').trim();
+            if (clean.length > 5) {
+                sceneElements.push(clean);
+            }
+        }
+    }
+    
+    // 3. Ищем ключевые слова локаций и действий
+    const locationKeywords = [
+        // Локации
+        'балкон', 'balcony', 'комната', 'room', 'bedroom', 'спальня', 'кухня', 'kitchen',
+        'улица', 'street', 'парк', 'park', 'лес', 'forest', 'пляж', 'beach', 'офис', 'office',
+        'школа', 'school', 'кафе', 'cafe', 'ресторан', 'restaurant', 'бар', 'bar', 'клуб', 'club',
+        'ванная', 'bathroom', 'душ', 'shower', 'кровать', 'bed', 'диван', 'sofa', 'couch',
+        'машина', 'car', 'поезд', 'train', 'самолет', 'plane', 'корабль', 'ship',
+        // Действия
+        'стоя', 'standing', 'сидя', 'sitting', 'лежа', 'lying', 'бежа', 'running',
+        'идя', 'walking', 'обнима', 'hugging', 'embrace', 'целу', 'kissing', 'kiss',
+        'смотр', 'looking', 'watching', 'держ', 'holding', 'танцу', 'dancing',
+        // Время и атмосфера
+        'ночь', 'night', 'день', 'day', 'утро', 'morning', 'вечер', 'evening',
+        'закат', 'sunset', 'рассвет', 'sunrise', 'дождь', 'rain', 'снег', 'snow'
+    ];
+    
+    const messageLower = message.toLowerCase();
+    const foundKeywords = [];
+    
+    for (const kw of locationKeywords) {
+        if (messageLower.includes(kw)) {
+            // Находим предложение с этим словом
+            const sentences = message.split(/[.!?\n]/);
+            for (const s of sentences) {
+                if (s.toLowerCase().includes(kw) && s.trim().length > 10) {
+                    foundKeywords.push(s.trim());
+                    break;
+                }
+            }
+        }
+    }
+    
+    // 4. Если ничего не нашли в специальных тегах, берём первые описательные предложения
+    if (sceneElements.length === 0 && foundKeywords.length === 0) {
+        // Убираем диалоги
+        const withoutDialogs = message
+            .replace(/"[^"]*"/g, '')
+            .replace(/«[^»]*»/g, '')
+            .replace(/„[^"]*"/g, '')
+            .replace(/'[^']*'/g, '');
+        
+        const sentences = withoutDialogs.split(/[.!?\n]/).filter(s => s.trim().length > 15);
+        if (sentences.length > 0) {
+            // Берём первые 2-3 предложения как описание сцены
+            sceneElements.push(...sentences.slice(0, 3).map(s => s.trim()));
+        }
+    }
+    
+    // Комбинируем результаты
+    const allElements = [...sceneElements, ...foundKeywords];
+    const uniqueElements = [...new Set(allElements)];
+    
+    return uniqueElements.slice(0, 5).join(', ');
 }
 
-// Конвертирует текст в URL формат (пробелы -> подчёркивания)
+// Конвертирует текст в URL формат
 function toUrlFormat(text) {
-    return encodeURIComponent(text.replace(/\s+/g, '_').replace(/,_/g, ',_'));
+    return encodeURIComponent(
+        text
+            .replace(/\s+/g, '_')
+            .replace(/,\s*/g, ',_')
+            .replace(/_+/g, '_')
+    );
 }
 
+// Построение финального промпта
 function buildPrompt(ctx) {
     const s = getSettings();
     const parts = [];
     
-    // Базовый стиль
+    // 1. Базовый стиль (всегда первый)
     if (s.positivePrompt) parts.push(s.positivePrompt);
     if (s.stylePrompt) parts.push(s.stylePrompt);
     
-    // Внешность персонажа
+    // 2. СЦЕНА И ДЕЙСТВИЕ (важно! идёт рано в промпте)
+    if (s.extractSceneContext && ctx.lastMsg) {
+        const scene = extractSceneFromMessage(ctx.lastMsg);
+        if (scene) {
+            parts.push(scene);
+            console.log('[Rina] Scene extracted:', scene);
+        }
+    }
+    
+    // 3. Внешность персонажа
     if (s.extractCharacterAppearance && ctx.charDesc) {
         const app = extractAppearanceFromCard(ctx.charDesc);
         if (app) parts.push(app);
     }
     
-    // Внешность юзера
+    // 4. Внешность юзера (если участвует в сцене)
     if (s.extractUserAppearance && ctx.userDesc) {
         const app = extractAppearanceFromCard(ctx.userDesc);
         if (app) parts.push(app);
     }
     
-    // Одежда из чата
+    // 5. Одежда из чата
     if (s.extractClothingFromChat && ctx.messages) {
         const cloth = extractClothingFromMessages(ctx.messages);
         if (cloth) parts.push(cloth);
     }
     
-    // Контекст сцены
-    if (s.extractSceneContext && ctx.lastMsg) {
-        const scene = extractSceneContext(ctx.lastMsg);
-        if (scene) parts.push(scene);
-    }
-    
     return parts.join(', ');
 }
 
-// Генерация через NovelAI (aituned прокси) - GET запрос
+// Генерация через NovelAI
 async function generateViaNovelAI(prompt, negative) {
     const s = getSettings();
     if (!s.novelAIKey) throw new Error('NovelAI key not set');
@@ -138,10 +226,9 @@ async function generateViaNovelAI(prompt, negative) {
     const positiveFormatted = toUrlFormat(prompt);
     const negativeFormatted = toUrlFormat(negative);
     
-    // Формат: https://aituned.xyz/v1/novelai/KEY/prompt/POSITIVE?uc=NEGATIVE&width=X&height=Y
     const url = `https://aituned.xyz/v1/novelai/${s.novelAIKey}/prompt/${positiveFormatted}?uc=${negativeFormatted}&width=${s.width}&height=${s.height}`;
     
-    console.log('[Rina] Request URL:', url);
+    console.log('[Rina] Request URL length:', url.length);
     
     const res = await fetch(url);
     
@@ -150,12 +237,18 @@ async function generateViaNovelAI(prompt, negative) {
         throw new Error(`NovelAI error ${res.status}: ${text}`);
     }
     
-    // Ответ - это изображение напрямую
     const blob = await res.blob();
-    return URL.createObjectURL(blob);
+    
+    // Конвертируем в base64 для сохранения
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
 }
 
-// Генерация через Nano Banana - тоже GET если такой же формат
+// Генерация через Nano Banana
 async function generateViaNanoBanana(prompt, negative) {
     const s = getSettings();
     if (!s.nanoBananaUrl) throw new Error('Nano Banana URL not set');
@@ -163,13 +256,10 @@ async function generateViaNanoBanana(prompt, negative) {
     const positiveFormatted = toUrlFormat(prompt);
     const negativeFormatted = toUrlFormat(negative);
     
-    // Предполагаем похожий формат
     let url = s.nanoBananaUrl;
     if (!url.includes('/prompt/')) {
         url = `${url}/prompt/${positiveFormatted}?uc=${negativeFormatted}&width=${s.width}&height=${s.height}`;
     }
-    
-    console.log('[Rina] Nano Banana URL:', url);
     
     const res = await fetch(url);
     
@@ -178,7 +268,13 @@ async function generateViaNanoBanana(prompt, negative) {
     }
     
     const blob = await res.blob();
-    return URL.createObjectURL(blob);
+    
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
 }
 
 function updateStatus(type, msg) {
@@ -187,45 +283,101 @@ function updateStatus(type, msg) {
         el.className = `rina-status ${type}`;
         el.textContent = msg;
         if (type !== 'loading') {
-            setTimeout(() => { el.textContent = ''; el.className = 'rina-status'; }, 3000);
+            setTimeout(() => { el.textContent = ''; el.className = 'rina-status'; }, 5000);
         }
     }
 }
 
-function insertImage(mesId, imageUrl, api) {
+// Отображение картинки в сообщении
+function displayImageInMessage(mesId, imageBase64) {
     const mesBlock = document.querySelector(`.mes[mesid="${mesId}"] .mes_text`);
     if (!mesBlock) return;
     
-    const old = mesBlock.querySelector(`.rina-img[data-api="${api}"]`);
-    if (old) old.remove();
+    // Удаляем старый контейнер если есть
+    const oldContainer = mesBlock.querySelector('.rina-img-container');
+    if (oldContainer) oldContainer.remove();
     
+    // Создаём контейнер
     const container = document.createElement('div');
     container.className = 'rina-img-container';
-    container.dataset.api = api;
-    container.style.cssText = 'position:relative;display:inline-block;margin-top:10px;';
+    container.style.cssText = 'position:relative;display:inline-block;margin-top:10px;max-width:100%;';
     
+    // Картинка
     const img = document.createElement('img');
     img.className = 'rina-img';
-    img.src = imageUrl;
+    img.src = imageBase64;
     img.style.cssText = 'max-width:100%;max-height:512px;border-radius:8px;cursor:pointer;display:block;';
-    img.onclick = () => window.open(imageUrl, '_blank');
+    img.onclick = () => {
+        const win = window.open();
+        win.document.write(`<img src="${imageBase64}" style="max-width:100%;">`);
+    };
     
-    // Кнопка перегенерации на картинке
+    // Кнопки управления
+    const controls = document.createElement('div');
+    controls.className = 'rina-img-controls';
+    controls.style.cssText = 'position:absolute;top:5px;right:5px;display:flex;gap:5px;';
+    
+    // Кнопка перегенерации
     const regenBtn = document.createElement('button');
     regenBtn.innerHTML = '🔄';
     regenBtn.title = 'Regenerate';
-    regenBtn.style.cssText = 'position:absolute;top:5px;right:5px;background:rgba(0,0,0,0.7);color:white;border:none;border-radius:4px;padding:5px 8px;cursor:pointer;opacity:0;transition:opacity 0.2s;';
-    regenBtn.onclick = (e) => { e.stopPropagation(); generateImage(true); };
+    regenBtn.style.cssText = 'background:rgba(0,0,0,0.7);color:white;border:none;border-radius:4px;padding:8px 10px;cursor:pointer;font-size:16px;';
+    regenBtn.onclick = (e) => {
+        e.stopPropagation();
+        generateImageForMessage(mesId, true);
+    };
     
-    container.onmouseenter = () => regenBtn.style.opacity = '1';
-    container.onmouseleave = () => regenBtn.style.opacity = '0';
+    // Кнопка скачивания
+    const downloadBtn = document.createElement('button');
+    downloadBtn.innerHTML = '💾';
+    downloadBtn.title = 'Download';
+    downloadBtn.style.cssText = 'background:rgba(0,0,0,0.7);color:white;border:none;border-radius:4px;padding:8px 10px;cursor:pointer;font-size:16px;';
+    downloadBtn.onclick = (e) => {
+        e.stopPropagation();
+        const link = document.createElement('a');
+        link.href = imageBase64;
+        link.download = `rina-${Date.now()}.png`;
+        link.click();
+    };
+    
+    controls.appendChild(regenBtn);
+    controls.appendChild(downloadBtn);
     
     container.appendChild(img);
-    container.appendChild(regenBtn);
+    container.appendChild(controls);
     mesBlock.appendChild(container);
 }
 
-async function generateImage(force = false) {
+// Сохранение картинки в данные сообщения
+function saveImageToMessage(mesId, imageBase64) {
+    const context = getContext();
+    if (context.chat && context.chat[mesId]) {
+        // Сохраняем в extra данные сообщения
+        if (!context.chat[mesId].extra) {
+            context.chat[mesId].extra = {};
+        }
+        context.chat[mesId].extra.rina_image = imageBase64;
+        saveChatDebounced();
+        console.log('[Rina] Image saved to message', mesId);
+    }
+}
+
+// Загрузка сохранённых картинок при открытии чата
+function loadSavedImages() {
+    const context = getContext();
+    if (!context.chat) return;
+    
+    for (let i = 0; i < context.chat.length; i++) {
+        const msg = context.chat[i];
+        if (msg.extra?.rina_image) {
+            displayImageInMessage(i, msg.extra.rina_image);
+        }
+    }
+    console.log('[Rina] Loaded saved images');
+}
+
+// Генерация для конкретного сообщения
+async function generateImageForMessage(mesId, force = false) {
     const s = getSettings();
     if (!s.enabled && !force) return;
     if (!s.useNanoBanana && !s.useNovelAI) {
@@ -235,62 +387,69 @@ async function generateImage(force = false) {
     
     const context = getContext();
     const chat = context.chat;
-    if (!chat || chat.length === 0) return;
+    if (!chat || !chat[mesId]) return;
     
-    const lastMsg = chat[chat.length - 1];
-    if (!lastMsg || lastMsg.is_user) return;
-    
-    const mesId = chat.length - 1;
+    const msg = chat[mesId];
+    if (msg.is_user) return;
     
     const promptCtx = {
         charDesc: context.characters?.[context.characterId]?.description || '',
         userDesc: context.persona?.description || '',
-        messages: chat,
-        lastMsg: lastMsg.mes,
+        messages: chat.slice(0, mesId + 1),
+        lastMsg: msg.mes,
     };
     
     const prompt = buildPrompt(promptCtx);
     const negative = s.negativePrompt;
     
-    console.log('[Rina] Prompt:', prompt);
-    updateStatus('loading', 'Generating...');
+    console.log('[Rina] Full prompt:', prompt);
+    updateStatus('loading', 'Generating image...');
     
-    const results = [];
-    
-    if (s.useNanoBanana && s.nanoBananaUrl) {
-        try {
-            const img = await generateViaNanoBanana(prompt, negative);
-            results.push({ api: 'nanobanana', img });
-        } catch (e) {
-            console.error('[Rina] NanoBanana error:', e);
-            updateStatus('error', 'NanoBanana: ' + e.message);
-        }
-    }
+    let imageBase64 = null;
     
     if (s.useNovelAI && s.novelAIKey) {
         try {
-            const img = await generateViaNovelAI(prompt, negative);
-            results.push({ api: 'novelai', img });
+            imageBase64 = await generateViaNovelAI(prompt, negative);
         } catch (e) {
             console.error('[Rina] NovelAI error:', e);
             updateStatus('error', 'NovelAI: ' + e.message);
         }
     }
     
-    if (results.length === 0) {
+    if (!imageBase64 && s.useNanoBanana && s.nanoBananaUrl) {
+        try {
+            imageBase64 = await generateViaNanoBanana(prompt, negative);
+        } catch (e) {
+            console.error('[Rina] NanoBanana error:', e);
+            updateStatus('error', 'NanoBanana: ' + e.message);
+        }
+    }
+    
+    if (!imageBase64) {
         updateStatus('error', 'Generation failed');
         return;
     }
     
-    for (const r of results) {
-        insertImage(mesId, r.img, r.api);
-    }
+    // Показываем и сохраняем
+    displayImageInMessage(mesId, imageBase64);
+    saveImageToMessage(mesId, imageBase64);
     
-    updateStatus('success', `Generated ${results.length} image(s)`);
+    updateStatus('success', 'Image generated!');
 }
 
-// Делаем функцию доступной глобально для кнопки
+// Генерация для последнего сообщения
+async function generateImage(force = false) {
+    const context = getContext();
+    const chat = context.chat;
+    if (!chat || chat.length === 0) return;
+    
+    const lastMesId = chat.length - 1;
+    await generateImageForMessage(lastMesId, force);
+}
+
+// Глобальная функция
 window.rinaGenerateImage = generateImage;
+window.rinaRegenerateForMessage = generateImageForMessage;
 
 function onSettingChange(id, key, isCheckbox = false) {
     const el = document.getElementById(id);
@@ -349,7 +508,7 @@ jQuery(async () => {
                         <span>NovelAI (aituned)</span>
                     </label>
                     <div id="rina-novelai-key-row" style="display:${s.useNovelAI ? 'block' : 'none'};margin-top:5px;">
-                        <small>API Key only (e.g. sk_aituned_xxx):</small>
+                        <small>API Key only:</small>
                         <input type="text" id="rina-novelai-key" class="text_pole" value="${s.novelAIKey}" placeholder="sk_aituned_xxxxx">
                     </div>
                 </div>
@@ -368,7 +527,7 @@ jQuery(async () => {
                 </div>
                 
                 <div class="rina-row" style="margin-top:10px;">
-                    <small>Extra style (optional):</small>
+                    <small>Extra style:</small>
                     <input type="text" id="rina-style-prompt" class="text_pole" value="${s.stylePrompt}" placeholder="anime style...">
                 </div>
                 
@@ -377,7 +536,7 @@ jQuery(async () => {
                 
                 <label class="checkbox_label">
                     <input type="checkbox" id="rina-extract-char" ${s.extractCharacterAppearance ? 'checked' : ''}>
-                    <span>Character appearance from card</span>
+                    <span>Character appearance</span>
                 </label>
                 
                 <label class="checkbox_label">
@@ -392,7 +551,7 @@ jQuery(async () => {
                 
                 <label class="checkbox_label">
                     <input type="checkbox" id="rina-extract-scene" ${s.extractSceneContext ? 'checked' : ''}>
-                    <span>Scene context</span>
+                    <span>Scene & actions from message</span>
                 </label>
                 
                 <hr>
@@ -450,8 +609,16 @@ jQuery(async () => {
     
     // Автогенерация при новом сообщении
     eventSource.on(event_types.MESSAGE_RECEIVED, () => {
-        setTimeout(() => generateImage(false), 500);
+        setTimeout(() => generateImage(false), 1000);
     });
+    
+    // Загрузка сохранённых картинок при смене чата
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        setTimeout(() => loadSavedImages(), 500);
+    });
+    
+    // Загрузка при старте если чат уже открыт
+    setTimeout(() => loadSavedImages(), 1000);
     
     console.log('[Rina] Extension loaded');
 });
